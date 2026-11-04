@@ -81,13 +81,16 @@ void ProToolsBridge::failPush (const juce::String& error)
 {
     {
         const juce::ScopedLock sl (lock);
-        report.pushError = "Push failed: " + error;
+        report.pushError = "Push failed: "
+                         + (error.startsWith ("Unsupported command ID")
+                                ? "this version of Pro Tools can't write pan automation for plug-ins. Update Pro Tools."
+                                : error);
     }
 
     if (linked)
         check(); // the old push may or may not still match; find out
     else
-        publish (Status::notLinked, "Not pushed.");
+        publish (Status::notLinked, {});
 }
 
 //==============================================================================

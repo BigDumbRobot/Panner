@@ -22,8 +22,10 @@ if(APPLE)
 endif()
 
 juce_add_plugin(Panner
-    PRODUCT_NAME "Panner"
+    PRODUCT_NAME "Anti-Music Spatial Panner"
     COMPANY_NAME "Anti-Music"
+    # Anti-Music plugin icon: stencil bass clef with glasses and mohawk.
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/plugin-icon.png"
     BUNDLE_ID com.antimusic.panner
     PLUGIN_MANUFACTURER_CODE Antm
     PLUGIN_CODE Pann
@@ -43,6 +45,9 @@ target_sources(Panner PRIVATE
     Source/PtslClient.cpp
     Source/DriftPrompt.cpp)
 
+# The editor cuts the stencil mark out of the icon for its header.
+juce_add_binary_data(PannerAssets SOURCES assets/icons/plugin-icon.png)
+
 target_compile_definitions(Panner PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -50,6 +55,7 @@ target_compile_definitions(Panner PUBLIC
 
 target_link_libraries(Panner
     PRIVATE
+        PannerAssets
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags

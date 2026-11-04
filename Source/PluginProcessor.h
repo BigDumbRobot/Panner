@@ -38,7 +38,7 @@ public:
     void setStateInformation (const void*, int) override;
     void updateTrackProperties (const TrackProperties&) override;
 
-    /** Parameter ID for one axis ('x', 'y' or 'z') of a sequencer step. */
+    /** Parameter ID for one setting of a sequencer step: 'x', 'y', 'z', 'm' (move) or 'r' (radius). */
     static juce::String stepParamId (int step, char axis)
     {
         return "s" + juce::String (step) + juce::String::charToString ((juce::juce_wchar) axis);
@@ -47,6 +47,11 @@ public:
     // The three answers to a drift prompt, plus the push button. Message thread.
     void pushToProTools()                                   { bridge.requestPush(); }
     void revertToLastPush();
+
+    /** True when committing would change Pro Tools' automation: nothing written yet, the
+        steps changed since the last write, or the lanes were edited in Pro Tools. */
+    bool differsFromWrittenAutomation() const;
+    bool rendersObjects() const                             { return renderMode->load() < 0.5f; }
     void unlinkFromProTools()                               { bridge.unlink(); }
 
     /** Lets the processor move the drift prompt between the editor and its own window. */
@@ -54,15 +59,24 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
-    // Position actually being rendered, for the editor.
-    std::atomic<float> liveX { 0.0f }, liveY { 0.0f }, liveZ { 0.0f };
-    std::atomic<int> liveStep { -1 };
+    /** Replaces a step's hand-drawn path with a stroke in room coordinates. Empty clears it.
+        Message thread. */
+    void setDrawing (int step, const std::vector<juce::Point<float>>& stroke);
+
+    /** The pattern as the parameters stand now. */
+    Pattern readPattern() const;
+
+    /** Where the source is right now, worked out from the last timeline position the host
+        reported. Lets the editor animate smoothly between audio callbacks, and still show
+        the right spot while the host has stopped calling the plug-in. step is -1 when the
+        sequencer is off. */
+    Position displayPosition (int& step) const;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameters();
 
-    Pattern readPattern() const;
     ProToolsBridge::Snapshot snapshotParameters() const;
+    static Pattern patternFromSnapshot (const ProToolsBridge::Snapshot&);
     juce::String getTrackName() const;
 
     void parameterChanged (const juce::String&, float) override   { bridge.requestCheck(); }
@@ -75,11 +89,24 @@ private:
 
     using Param = std::atomic<float>*;
     Param x, y, z, size, width, gain, seqOn, seqSteps, seqRate, seqGlide, renderMode;
-    std::array<std::array<Param, 3>, Sequencer::maxSteps> stepParams;
+    std::array<std::array<Param, 5>, Sequencer::maxSteps> stepParams; // x, y, z, move, radius
+
+    // Hand-drawn paths. Not parameters, so they're saved with the state and read under a lock.
+    mutable juce::SpinLock drawingLock;
+    std::array<Sequencer::Drawing, Sequencer::maxSteps> drawings {};
+    std::array<bool, Sequencer::maxSteps> hasDrawing {};
+
+    void setDrawingInternal (int step, const Sequencer::Drawing*);
+    static juce::String drawingKey (int step)   { return "draw" + juce::String (step); }
 
     SpeakerLayout layout;
     double sampleRate = 44100.0;
-    bool snapGains = true;
+    bool snapGains = true, wasPlaying = false;
+    juce::int64 expectedSample = 0;
+
+    // Last timeline the host reported, for displayPosition().
+    std::atomic<double> hostPpq { 0.0 }, hostBpm { 120.0 }, hostStampMs { 0.0 };
+    std::atomic<bool> hostPlaying { false };
     std::array<std::array<float, SpeakerLayout::maxChannels>, maxInputs> gains {};
 
     juce::CriticalSection trackNameLock;

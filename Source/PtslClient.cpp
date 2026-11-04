@@ -504,7 +504,7 @@ bool PtslClient::connect (juce::String& error)
     }
 
     auto registration = send (registerConnection, object ({ { "company_name", "Anti-Music" },
-                                                            { "application_name", "Panner" } }));
+                                                            { "application_name", "Anti-Music Spatial Panner" } }));
 
     if (! registration.ok)
     {

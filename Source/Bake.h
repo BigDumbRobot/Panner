@@ -20,14 +20,60 @@ struct Pattern
     }
 };
 
+/** True when two patterns would write the same automation. Ignores settings that don't reach
+    the lanes, such as steps past the step count or the radius of a move without one. */
+inline bool samePattern (const Pattern& a, const Pattern& b)
+{
+    auto near = [] (float u, float v) { return std::abs (u - v) < 1.0e-4f; };
+    auto samePosition = [&] (const Position& p, const Position& q) { return near (p.x, q.x) && near (p.y, q.y) && near (p.z, q.z); };
+
+    if (! near (a.size, b.size) || ! near (a.width, b.width) || a.sequenced != b.sequenced)
+        return false;
+
+    if (! a.sequenced)
+        return samePosition (a.manual, b.manual);
+
+    if (a.numSteps != b.numSteps || ! juce::exactlyEqual (a.stepBeats, b.stepBeats) || ! near (a.glide, b.glide))
+        return false;
+
+    for (size_t i = 0; i < (size_t) a.numSteps; ++i)
+    {
+        const auto& s = a.steps[i];
+        const auto& t = b.steps[i];
+
+        if (! samePosition (s.position, t.position) || s.move != t.move)
+            return false;
+
+        const bool hasRadius = s.move == Sequencer::circle || s.move == Sequencer::figureEight || s.move == Sequencer::zigzag;
+
+        if (hasRadius && ! near (s.radius, t.radius))
+            return false;
+
+        if (s.move == Sequencer::drawn)
+        {
+            if (s.hasDrawing != t.hasDrawing)
+                return false;
+
+            if (s.hasDrawing)
+                for (size_t k = 0; k < s.drawing.size(); ++k)
+                    if (! near (s.drawing[k].x, t.drawing[k].x) || ! near (s.drawing[k].y, t.drawing[k].y))
+                        return false;
+        }
+    }
+
+    return true;
+}
+
 /** Turns a pattern into automation breakpoints, and checks breakpoints against a pattern.
 
-    Between the times returned by keyTimes() the pattern only ever moves in straight lines,
-    so a host that joins breakpoints with straight lines reproduces it exactly. */
+    Between the times returned by keyTimes() the pattern moves in straight lines, or, inside
+    curved and drawn moves, close enough to straight that a host joining breakpoints with
+    straight lines reproduces it. */
 namespace Bake
 {
     constexpr double ticksPerBeat = 960000.0; // Pro Tools ticks per quarter note
     constexpr double oneTick = 1.0 / ticksPerBeat;
+    constexpr int curveSamplesPerStep = 48; // per beat of movement, capped per step
 
     struct Point
     {
@@ -47,15 +93,29 @@ namespace Bake
             {
                 const double boundary = k * p.stepBeats;
 
+                const double moveBeats = (1.0 - p.glide) * p.stepBeats;
+
                 if (p.glide > 0.0f)
                 {
                     times.push_back (boundary);                                    // arrive at step
-                    times.push_back (boundary + (1.0 - p.glide) * p.stepBeats);    // start gliding on
+                    times.push_back (boundary + moveBeats);                        // start gliding on
                 }
                 else
                 {
                     times.push_back (boundary - oneTick);                          // last tick of previous step
                     times.push_back (boundary);                                    // jump
+                }
+
+                // Curves and drawings: enough points that straight lines between them follow
+                // the shape. Line and Point moves are already straight.
+                const auto& step = p.steps[(size_t) Sequencer::stepAt (boundary, p.stepBeats, p.numSteps)];
+
+                if (Sequencer::isCurved (step) && moveBeats > 0.0)
+                {
+                    const int samples = juce::jlimit (8, curveSamplesPerStep, (int) std::ceil (moveBeats * curveSamplesPerStep));
+
+                    for (int i = 1; i < samples; ++i)
+                        times.push_back (boundary + moveBeats * i / samples);
                 }
             }
         }
